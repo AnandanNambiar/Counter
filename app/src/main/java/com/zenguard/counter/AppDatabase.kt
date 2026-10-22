@@ -5,10 +5,11 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [DailyCount::class], version = 1)
+@Database(entities = [DailyCount::class, Counter::class], version = 2)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun dailyCountDao(): DailyCountDao
+    abstract fun counterDao(): CounterDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -19,7 +20,9 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "japa.db"
-                ).build().also { instance = it }
+                )
+                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    .build().also { instance = it }
             }
     }
 }
