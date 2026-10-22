@@ -21,11 +21,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -175,17 +179,80 @@ fun CounterList(onOpen: (Counter) -> Unit, modifier: Modifier = Modifier) {
         Spacer(modifier = Modifier.height(16.dp))
         Text("Saved counters: ${counters.size}")
 
-
         LazyColumn {
-            items(counters) { c ->
-                Text(
-                    text = c.name,
-                    fontSize = 20.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpen(c) }
-                        .padding(vertical = 16.dp)
-                )
+            items(counters, key = { it.id }) { c ->
+                var menuOpen by remember { mutableStateOf(false) }
+                var renameOpen by remember { mutableStateOf(false) }
+                var renameText by remember { mutableStateOf(c.name) }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = c.name,
+                        fontSize = 20.sp,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onOpen(c) }
+                            .padding(vertical = 16.dp)
+                    )
+                    Box {
+                        Text(
+                            text = "⋮",
+                            fontSize = 24.sp,
+                            modifier = Modifier
+                                .clickable { menuOpen = true }
+                                .padding(12.dp)
+                        )
+                        DropdownMenu(
+                            expanded = menuOpen,
+                            onDismissRequest = { menuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Rename") },
+                                onClick = {
+                                    menuOpen = false
+                                    renameText = c.name
+                                    renameOpen = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete") },
+                                onClick = {
+                                    menuOpen = false
+                                    scope.launch { dao.delete(c.id) }
+                                }
+                            )
+                        }
+
+                        if (renameOpen) {
+                            AlertDialog(
+                                onDismissRequest = { renameOpen = false },
+                                title = { Text("Rename counter") },
+                                text = {
+                                    OutlinedTextField(
+                                        value = renameText,
+                                        onValueChange = { renameText = it },
+                                        singleLine = true
+                                    )
+                                },
+                                confirmButton = {
+                                    TextButton(onClick = {
+                                        val newName = renameText.trim()
+                                        if (newName.isNotBlank()) {
+                                            scope.launch { dao.rename(c.id, newName) }
+                                        }
+                                        renameOpen = false
+                                    }) { Text("Save") }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { renameOpen = false }) { Text("Cancel") }
+                                }
+                            )
+                        }
+                    }
+                }
             }
         }
     }

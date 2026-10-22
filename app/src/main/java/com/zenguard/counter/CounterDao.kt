@@ -5,6 +5,7 @@ import androidx.room.Query
 import androidx.room.Insert
 import kotlinx.coroutines.flow.Flow
 
+
 @Dao
 interface CounterDao {
 
