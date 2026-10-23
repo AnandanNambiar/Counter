@@ -47,6 +47,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.zenguard.counter.ui.theme.CounterTheme
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
@@ -81,7 +82,7 @@ fun GreetingPreview() {
 }
 
 @Composable
-fun TapCounter(counterId: Int, name: String, modifier: Modifier = Modifier) {
+fun TapCounter(counterId: Int, name: String, onHistory: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.get(context).dailyCountDao() }
     val scope = rememberCoroutineScope()
@@ -107,6 +108,10 @@ fun TapCounter(counterId: Int, name: String, modifier: Modifier = Modifier) {
                     .padding(16.dp)
             )
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("History") },
+                    onClick = { menuOpen = false; onHistory() }
+                )
                 DropdownMenuItem(
                     text = { Text("Reset daily count") },
                     onClick = { menuOpen = false; confirm = "day" }
@@ -196,20 +201,32 @@ fun TapCounter(counterId: Int, name: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun App(modifier: Modifier = Modifier) {
-    var selected by remember { mutableStateOf<Counter?>(null) }
-    val current = selected
+    var screen by remember { mutableStateOf<Screen>(Screen.Home) }
+    val s = screen
 
-    BackHandler(enabled = current != null) { selected = null }
+    BackHandler(enabled = s !is Screen.Home) {
+        screen = if (s is Screen.History && s.counter != null) Screen.Count(s.counter)
+        else Screen.Home
+    }
 
-    if (current == null) {
-        CounterList(onOpen = { selected = it }, modifier = modifier)
-    } else {
-        TapCounter(current.id, current.name, modifier)
+    when (s) {
+        is Screen.Home -> CounterList(
+            onOpen = { screen = Screen.Count(it) },
+            onHistory = { screen = Screen.History(null) },
+            modifier = modifier
+        )
+        is Screen.Count -> TapCounter(
+            counterId = s.counter.id,
+            name = s.counter.name,
+            onHistory = { screen = Screen.History(s.counter) },
+            modifier = modifier
+        )
+        is Screen.History -> HistoryScreen(s.counter, modifier)
     }
 }
 
 @Composable
-fun CounterList(onOpen: (Counter) -> Unit, modifier: Modifier = Modifier) {
+fun CounterList(onOpen: (Counter) -> Unit, onHistory: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.get(context).counterDao() }
     val dailyDao = remember { AppDatabase.get(context).dailyCountDao() }
@@ -220,6 +237,7 @@ fun CounterList(onOpen: (Counter) -> Unit, modifier: Modifier = Modifier) {
     var newName by remember { mutableStateOf("") }
 
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
+        TextButton(onClick = onHistory) {Text("View history") }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = newName,
@@ -318,6 +336,35 @@ fun CounterList(onOpen: (Counter) -> Unit, modifier: Modifier = Modifier) {
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+}
+sealed interface Screen {
+    object Home : Screen
+    data class Count(val counter: Counter) : Screen
+    data class History(val counter: Counter?) : Screen
+}
+
+@Composable
+fun HistoryScreen(counter: Counter?, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val dao = remember { AppDatabase.get(context).dailyCountDao() }
+    val rows by remember(counter?.id) {
+        if (counter == null) dao.observeAllHistory()
+        else dao.observeHistory(counter.id)
+            .map {list -> list.map { HistoryRow(it.date, counter.name, it.count) } }
+    }.collectAsState(initial = emptyList())
+
+    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
+        if (rows.isEmpty()) Text("Nothing counted yet.")
+        LazyColumn {
+            items(rows) { r ->
+                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    Text(r.date, modifier = Modifier.weight(1f))
+                    if (counter == null) Text(r.name, modifier = Modifier.weight(1f))
+                    Text("${r.count}  (108 × ${r.count / 108})")
                 }
             }
         }

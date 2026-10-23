@@ -22,4 +22,15 @@ interface DailyCountDao {
 
     @Query("DELETE FROM daily_count WHERE counterId = :counterId")
     suspend fun resetAll(counterId: Int)
+
+    @Query("SELECT * FROM daily_count WHERE counterId = :counterId AND count > 0 ORDER BY date DESC")
+    fun observeHistory(counterId: Int): Flow<List<DailyCount>>
+
+    @Query("""
+        SELECT d.date AS date, c.name AS name, d.count AS count
+        FROM daily_count d JOIN counter c ON c.id = d.counterId
+        WHERE d.count > 0
+        ORDER BY d.date DESC, c.name
+    """)
+    fun observeAllHistory(): Flow<List<HistoryRow>>
 }
