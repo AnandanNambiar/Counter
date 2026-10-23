@@ -90,49 +90,107 @@ fun TapCounter(counterId: Int, name: String, modifier: Modifier = Modifier) {
     val saved by dao.observeCount(counterId, LocalDate.now().toString())
         .collectAsState(initial = 0)
     val count = saved ?: 0
+    val lifetime by dao.observeLifetime(counterId).collectAsState(initial = 0)
 
-    Column(
-        modifier = modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(text = name)
+    var menuOpen by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf<String?>(null) }
 
-        // Small undo circle
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.secondary)
-                .clickable {
-                    if (count > 0) scope.launch {
-                        dao.save(DailyCount(counterId, LocalDate.now().toString(), count - 1))
-                    }
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(text = "↶", fontSize = 28.sp)
+    Box(modifier = modifier.fillMaxSize()) {
+
+        // ⋮ menu, top right
+        Box(modifier = Modifier.align(Alignment.TopEnd)) {
+            Text(
+                text = "⋮",
+                fontSize = 28.sp,
+                modifier = Modifier
+                    .clickable { menuOpen = true }
+                    .padding(16.dp)
+            )
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("Reset daily count") },
+                    onClick = { menuOpen = false; confirm = "day" }
+                )
+                DropdownMenuItem(
+                    text = { Text("Reset lifetime count") },
+                    onClick = { menuOpen = false; confirm = "all" }
+                )
+            }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(text = name)
+            Text("Today: $count  (108 × ${count / 108})")
+            Text("Lifetime: $lifetime  (108 × ${lifetime / 108})")
 
-        // Big tap circle
-        Box(
-            modifier = Modifier
-                .size(240.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary)
-                .clickable {
+            // Small undo circle
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.secondary)
+                    .clickable {
+                        if (count > 0) scope.launch {
+                            dao.save(DailyCount(counterId, LocalDate.now().toString(), count - 1))
+                        }
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text = "↶", fontSize = 28.sp)
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Big tap circle
+            Box(
+                modifier = Modifier
+                    .size(240.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+                    .clickable {
+                        scope.launch {
+                            dao.save(DailyCount(counterId, LocalDate.now().toString(), count + 1))
+                        }
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text = "$count", fontSize = 56.sp)
+            }
+        }
+    }
+
+    val pending = confirm
+    if (pending != null) {
+        AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = {
+                Text(if (pending == "day") "Reset today's count?" else "Reset lifetime count?")
+            },
+            text = {
+                Text(
+                    if (pending == "day") "Today's count for this counter will be cleared."
+                    else "All saved counts for this counter will be deleted. This cannot be undone."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
                     scope.launch {
-                        dao.save(DailyCount(counterId, LocalDate.now().toString(), count + 1))
+                        if (pending == "day") dao.resetDay(counterId, LocalDate.now().toString())
+                        else dao.resetAll(counterId)
                     }
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(text = "$count", fontSize = 56.sp)
-        }
+                    confirm = null
+                }) { Text("Reset") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirm = null }) { Text("Cancel") }
+            }
+        )
     }
 }
 
@@ -154,8 +212,11 @@ fun App(modifier: Modifier = Modifier) {
 fun CounterList(onOpen: (Counter) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.get(context).counterDao() }
+    val dailyDao = remember { AppDatabase.get(context).dailyCountDao() }
     val scope = rememberCoroutineScope()
-    val counters by dao.observeAll().collectAsState(initial = emptyList())
+    val today = LocalDate.now().toString()
+    val counters by remember(today) { dao.observeSummaries(today) }
+        .collectAsState(initial = emptyList())
     var newName by remember { mutableStateOf("") }
 
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
@@ -189,14 +250,16 @@ fun CounterList(onOpen: (Counter) -> Unit, modifier: Modifier = Modifier) {
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = c.name,
-                        fontSize = 20.sp,
+                    Column(
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { onOpen(c) }
-                            .padding(vertical = 16.dp)
-                    )
+                            .clickable{ onOpen(Counter(id = c.id, name = c.name)) }
+                            .padding(vertical = 12.dp)
+                    ) {
+                        Text(text = c.name, fontSize = 20.sp)
+                        Text("Today: ${c.today} (108 × ${c.today / 108})")
+                        Text("Lifetime: ${c.lifetime}  (108 × ${c.lifetime / 108})")
+                    }
                     Box {
                         Text(
                             text = "⋮",
@@ -221,7 +284,10 @@ fun CounterList(onOpen: (Counter) -> Unit, modifier: Modifier = Modifier) {
                                 text = { Text("Delete") },
                                 onClick = {
                                     menuOpen = false
-                                    scope.launch { dao.delete(c.id) }
+                                    scope.launch {
+                                        dailyDao.resetAll(c.id)
+                                        dao.delete(c.id)
+                                    }
                                 }
                             )
                         }
