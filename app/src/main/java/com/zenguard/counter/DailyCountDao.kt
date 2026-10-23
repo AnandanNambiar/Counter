@@ -33,4 +33,7 @@ interface DailyCountDao {
         ORDER BY d.date DESC, c.name
     """)
     fun observeAllHistory(): Flow<List<HistoryRow>>
+
+    @Query("SELECT count FROM daily_count WHERE counterId = :counterId AND date = :date")
+    suspend fun getCount(counterId: Int, date: String): Int?
 }

@@ -31,6 +31,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +48,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.zenguard.counter.ui.theme.CounterTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -95,6 +97,28 @@ fun TapCounter(counterId: Int, name: String, onHistory: () -> Unit, modifier: Mo
 
     var menuOpen by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<String?>(null) }
+    var running by remember { mutableStateOf(false) }
+    var session by remember { mutableStateOf(0) }
+    val focusTarget = 108 * 5
+
+    LaunchedEffect(running) {
+        if (running) {
+            session = 0
+            while (session < focusTarget) {
+                delay(1000)
+                val date = LocalDate.now().toString()
+                val current = dao.getCount(counterId, date) ?: 0
+                dao.save(DailyCount(counterId, date, current + 1))
+                session++
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            }
+            repeat(3) {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                delay(250)
+            }
+            running = false
+        }
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
 
@@ -150,6 +174,9 @@ fun TapCounter(counterId: Int, name: String, onHistory: () -> Unit, modifier: Mo
             }
 
             Spacer(modifier = Modifier.height(24.dp))
+            Button(onClick = { running = !running }) {
+                Text(if (running) "Stop ($session / $focusTarget)" else "Start focus mode")
+            }
 
             // Big tap circle
             Box(
