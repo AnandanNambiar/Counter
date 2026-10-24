@@ -1,6 +1,8 @@
 package com.zenguard.counter
 
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.magnifier
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -41,7 +44,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusModifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.modifier.modifierLocalConsumer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.tooling.preview.Preview
@@ -89,6 +94,7 @@ fun TapCounter(counterId: Int, name: String, onHistory: () -> Unit, modifier: Mo
     val dao = remember { AppDatabase.get(context).dailyCountDao() }
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
+    val vibrator = context.getSystemService(Vibrator::class.java)
 
     val saved by dao.observeCount(counterId, LocalDate.now().toString())
         .collectAsState(initial = 0)
@@ -99,23 +105,24 @@ fun TapCounter(counterId: Int, name: String, onHistory: () -> Unit, modifier: Mo
     var confirm by remember { mutableStateOf<String?>(null) }
     var running by remember { mutableStateOf(false) }
     var session by remember { mutableStateOf(0) }
-    val focusTarget = 108 * 5
+    var showFocus by remember { mutableStateOf(false) }
+    var intervalText by remember { mutableStateOf("1") }
+    var targetText by remember { mutableStateOf("1") }
+    val focusTarget = (targetText.toIntOrNull()?.coerceAtLeast(1) ?: 1) * 108
 
     LaunchedEffect(running) {
         if (running) {
             session = 0
             while (session < focusTarget) {
-                delay(1000)
+                var seconds = intervalText.toDoubleOrNull()?.coerceAtLeast(0.2) ?: 1.0
+                delay((seconds * 1000).toLong())
                 val date = LocalDate.now().toString()
                 val current = dao.getCount(counterId, date) ?: 0
                 dao.save(DailyCount(counterId, date, current + 1))
                 session++
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             }
-            repeat(3) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                delay(250)
-            }
+            vibrator?.vibrate(VibrationEffect.createOneShot(800, VibrationEffect.DEFAULT_AMPLITUDE))
             running = false
         }
     }
@@ -132,6 +139,14 @@ fun TapCounter(counterId: Int, name: String, onHistory: () -> Unit, modifier: Mo
                     .padding(16.dp)
             )
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text(if (showFocus) "Hide Focus Mode" else "Focus mode")},
+                    onClick = {
+                        menuOpen = false
+                        if (showFocus) running = false
+                        showFocus = !showFocus
+                    }
+                )
                 DropdownMenuItem(
                     text = { Text("History") },
                     onClick = { menuOpen = false; onHistory() }
@@ -174,8 +189,31 @@ fun TapCounter(counterId: Int, name: String, onHistory: () -> Unit, modifier: Mo
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-            Button(onClick = { running = !running }) {
-                Text(if (running) "Stop ($session / $focusTarget)" else "Start focus mode")
+            if (showFocus) {
+                OutlinedTextField(
+                    value = intervalText,
+                    onValueChange = { intervalText = it },
+                    label = { Text("Seconds between counts") },
+                    singleLine = true,
+                    enabled = !running,
+                    modifier = Modifier.width(220.dp)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = targetText,
+                    onValueChange = { targetText = it },
+                    label = { Text("Target (malas of 108)") },
+                    singleLine = true,
+                    enabled = !running,
+                    modifier =  Modifier.width(220.dp)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Button(onClick = { running = !running}) {
+                    Text(if (running) "Stop ($session / $focusTarget)" else "Start focus mode")
+                }
+                Spacer(modifier = Modifier.height(24.dp))
             }
 
             // Big tap circle
