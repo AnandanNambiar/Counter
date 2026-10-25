@@ -36,4 +36,14 @@ interface DailyCountDao {
 
     @Query("SELECT count FROM daily_count WHERE counterId = :counterId AND date = :date")
     suspend fun getCount(counterId: Int, date: String): Int?
+
+    @Query("INSERT OR IGNORE INTO daily_count (counterId, date, count) VALUES (:counterId, :date, 0)")
+    suspend fun ensureRow(counterId: Int, date: String)
+
+    @Query("UPDATE daily_count SET count = count + 1 WHERE counterId = :counterId AND date = :date")
+    suspend fun increment(counterId: Int, date: String)
+
+    @Query("UPDATE daily_count SET count = MAX(count - 1, 0) WHERE counterId = :counterId AND date = :date")
+    suspend fun decrement(counterId: Int, date: String)
+
 }

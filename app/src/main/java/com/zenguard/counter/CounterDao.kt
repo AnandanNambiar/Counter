@@ -32,4 +32,10 @@ interface CounterDao {
     @Query("DELETE FROM counter WHERE id = :id")
     suspend fun delete(id: Int)
 
+    @Query("SELECT * FROM counter WHERE id = :id")
+    suspend fun get(id: Int): Counter?
+
+    @Query("UPDATE counter SET focusIntervalSec = :sec, focusTargetMalas = :malas WHERE id = :id")
+    suspend fun saveFocus(id: Int, sec: Double, malas: Int)
+
 }
