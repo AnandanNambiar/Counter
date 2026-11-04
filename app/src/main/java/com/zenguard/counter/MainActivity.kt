@@ -1,6 +1,7 @@
 package com.zenguard.counter
 
 import android.os.Bundle
+import androidx.compose.material3.LinearProgressIndicator
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.activity.ComponentActivity
@@ -271,8 +272,15 @@ fun TapCounter(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "$count", fontSize = 64.sp, color = MaterialTheme.colorScheme.onPrimary)
+                Text(text = "${count % 108}", fontSize = 64.sp, color = MaterialTheme.colorScheme.onPrimary)
             }
+            Spacer(modifier = Modifier.height(16.dp))
+            LinearProgressIndicator(
+                progress = { (count % 108) / 108f },
+                modifier = Modifier.width(240.dp)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("${count % 108} / 108", style = MaterialTheme.typography.bodyMedium)
         }
     }
 
