@@ -48,4 +48,9 @@ interface CounterDao {
     ORDER BY c.createdAt
 """)
     suspend fun countersBelowTarget(today: String): List<Counter>
+
+    @Query("SELECT * FROM counter ORDER BY id")
+    suspend fun getAll(): List<Counter>
+
+
     }

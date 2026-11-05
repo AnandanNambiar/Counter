@@ -46,4 +46,7 @@ interface DailyCountDao {
     @Query("UPDATE daily_count SET count = MAX(count - 1, 0) WHERE counterId = :counterId AND date = :date")
     suspend fun decrement(counterId: Int, date: String)
 
+    @Query("SELECT * FROM daily_count")
+    suspend fun getAll(): List<DailyCount>
+
 }

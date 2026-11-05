@@ -42,6 +42,15 @@ object Notifier {
             context, counterId ?: 0, intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        // ...the NotificationCompat.Builder block stays exactly as it was...
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setContentIntent(pending)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+
+        manager.notify(1, notification)
     }
 }

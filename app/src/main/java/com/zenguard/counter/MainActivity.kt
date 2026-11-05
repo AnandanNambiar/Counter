@@ -75,6 +75,11 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
+import android.content.Context
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private val askNotifications =
@@ -179,6 +184,18 @@ fun TapCounter(
     val doneDays = history.filter { it.count >= dailyTarget }
         .map { LocalDate.parse(it.date) }.toSet()
     val streak = computeStreak(doneDays, LocalDate.now())
+    val prefs = remember { context.getSharedPreferences("milestones", Context.MODE_PRIVATE) }
+    var celebrate by remember { mutableStateOf<Milestone?>(null) }
+
+    LaunchedEffect(streak, lifetime) {
+        val fresh = reachedMilestones(streak, lifetime)
+            .firstOrNull { !prefs.getBoolean("$counterId:${it.key}", false) }
+        if (fresh != null) {
+            prefs.edit().putBoolean("$counterId:${fresh.key}", true).apply()
+            celebrate = fresh
+            vibrator?.vibrate(VibrationEffect.createOneShot(1000, VibrationEffect.DEFAULT_AMPLITUDE))
+        }
+    }
 
 
     // Load this counter's saved settings
@@ -415,6 +432,16 @@ fun TapCounter(
             }
         )
     }
+    celebrate?.let { m ->
+        AlertDialog(
+            onDismissRequest = { celebrate = null },
+            title = { Text("Milestone: ${m.title}") },
+            text = { Text("You've done $lifetime counts on $name since you started. Keep going.") },
+            confirmButton = {
+                TextButton(onClick = { celebrate = null }) { Text("Continue") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -472,9 +499,48 @@ fun CounterList(
     val counters by remember(today) { dao.observeSummaries(today) }
         .collectAsState(initial = emptyList())
     var newName by remember { mutableStateOf("") }
+    var homeMenu by remember { mutableStateOf(false) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val db = AppDatabase.get(context)
+                val json = buildBackupJson(db.counterDao().getAll(), db.dailyCountDao().getAll())
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
+                }
+                Toast.makeText(context, "Backup saved", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
-        Text("Japa Counter", style = MaterialTheme.typography.headlineMedium)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Japa Counter",
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.weight(1f)
+            )
+            Box {
+                IconButton(onClick = { homeMenu = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Menu")
+                }
+                DropdownMenu(expanded = homeMenu, onDismissRequest = { homeMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Back up data") },
+                        onClick = {
+                            homeMenu = false
+                            exportLauncher.launch("japa-backup-${LocalDate.now()}.json")
+                        }
+                    )
+                }
+            }
+        }
         Spacer(modifier = Modifier.height(8.dp))
         TextButton(onClick = onHistory) { Text("View history") }
         TextButton(onClick = { Notifier.show(context, "Japa Counter", "Time for your japa") }) {
