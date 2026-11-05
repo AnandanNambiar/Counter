@@ -1,13 +1,17 @@
 package com.zenguard.counter
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
-import androidx.compose.material3.LinearProgressIndicator
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -35,6 +39,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -57,23 +62,67 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.zenguard.counter.ui.theme.CounterTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
+    private val askNotifications =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    private var openCounter by mutableStateOf<Counter?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Notifier.createChannel(this)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        val request = PeriodicWorkRequestBuilder<ReminderWorker>(2, TimeUnit.HOURS).build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "reminders",
+            ExistingPeriodicWorkPolicy.UPDATE,
+            request
+        )
+
+        readIntent(intent)
         enableEdgeToEdge()
         setContent {
             CounterTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    App(modifier = Modifier.padding(innerPadding))
+                    App(
+                        openCounter = openCounter,
+                        onOpened = { openCounter = null },
+                        modifier = Modifier.padding(innerPadding)
+                    )
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        readIntent(intent)
+    }
+
+    private fun readIntent(intent: Intent?) {
+        val id = intent?.getIntExtra("counterId", -1) ?: -1
+        val name = intent?.getStringExtra("counterName")
+        if (id != -1 && name != null) openCounter = Counter(id = id, name = name)
     }
 }
 
@@ -112,7 +161,7 @@ fun TapCounter(
         .collectAsState(initial = 0)
     val count = saved ?: 0
     val lifetime by dao.observeLifetime(counterId).collectAsState(initial = 0)
-
+    val history by dao.observeHistory(counterId).collectAsState(initial = emptyList())
     var menuOpen by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<String?>(null) }
     var running by remember { mutableStateOf(false) }
@@ -120,13 +169,25 @@ fun TapCounter(
     var showFocus by remember { mutableStateOf(false) }
     var intervalText by remember { mutableStateOf("1") }
     var targetText by remember { mutableStateOf("1") }
+    var dailyTarget by remember { mutableStateOf(108) }
+    var targetDialog by remember { mutableStateOf(false) }
+    var dailyTargetText by remember { mutableStateOf("108") }
+    val targetMalas = dailyTarget / 108.0
+    val targetLabel =
+        if (targetMalas % 1.0 == 0.0) targetMalas.toInt().toString()
+        else "%.2f".format(targetMalas)
+    val doneDays = history.filter { it.count >= dailyTarget }
+        .map { LocalDate.parse(it.date) }.toSet()
+    val streak = computeStreak(doneDays, LocalDate.now())
 
-    // Load this counter's saved focus settings
+
+    // Load this counter's saved settings
     LaunchedEffect(counterId) {
         counterDao.get(counterId)?.let {
             val sec = it.focusIntervalSec
             intervalText = if (sec % 1.0 == 0.0) sec.toInt().toString() else sec.toString()
             targetText = it.focusTargetMalas.toString()
+            dailyTarget = it.dailyTarget
         }
     }
 
@@ -175,6 +236,14 @@ fun TapCounter(
                     }
                 )
                 DropdownMenuItem(
+                    text = { Text("Set daily target") },
+                    onClick = {
+                        menuOpen = false
+                        dailyTargetText = targetLabel
+                        targetDialog = true
+                    }
+                )
+                DropdownMenuItem(
                     text = { Text("History") },
                     onClick = { menuOpen = false; onHistory() }
                 )
@@ -198,6 +267,8 @@ fun TapCounter(
             Spacer(modifier = Modifier.height(8.dp))
             Text("Today: $count (108 × ${count / 108})", style = MaterialTheme.typography.bodyLarge)
             Text("Lifetime: $lifetime (108 × ${lifetime / 108})", style = MaterialTheme.typography.bodyLarge)
+            Text("Daily target: $targetLabel malas", style = MaterialTheme.typography.bodyLarge)
+            Text("Streak: $streak days", style = MaterialTheme.typography.bodyLarge)
             Spacer(modifier = Modifier.height(24.dp))
 
             // Small undo circle
@@ -272,7 +343,11 @@ fun TapCounter(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "${count % 108}", fontSize = 64.sp, color = MaterialTheme.colorScheme.onPrimary)
+                Text(
+                    text = "${count % 108}",
+                    fontSize = 64.sp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
             }
             Spacer(modifier = Modifier.height(16.dp))
             LinearProgressIndicator(
@@ -284,6 +359,7 @@ fun TapCounter(
         }
     }
 
+    // Reset confirmation dialog
     val pending = confirm
     if (pending != null) {
         AlertDialog(
@@ -311,12 +387,52 @@ fun TapCounter(
             }
         )
     }
+
+    // Daily target dialog
+    if (targetDialog) {
+        AlertDialog(
+            onDismissRequest = { targetDialog = false },
+            title = { Text("Daily target") },
+            text = {
+                OutlinedTextField(
+                    value = dailyTargetText,
+                    onValueChange = { dailyTargetText = it },
+                    label = { Text("Malas per day (108 counts each)") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val m = dailyTargetText.toDoubleOrNull()
+                    val t = if (m != null && m > 0) (m * 108).roundToInt().coerceAtLeast(1) else dailyTarget
+                    dailyTarget = t
+                    scope.launch { counterDao.saveTarget(counterId, t) }
+                    targetDialog = false})
+                { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { targetDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 @Composable
-fun App(modifier: Modifier = Modifier) {
+fun App(
+    openCounter: Counter?,
+    onOpened: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     val s = screen
+
+    // Jump straight to a counter when a notification was tapped
+    LaunchedEffect(openCounter) {
+        if (openCounter != null) {
+            screen = Screen.Count(openCounter)
+            onOpened()
+        }
+    }
 
     val goBack: () -> Unit = {
         screen = if (s is Screen.History && s.counter != null) Screen.Count(s.counter)
@@ -361,6 +477,16 @@ fun CounterList(
         Text("Japa Counter", style = MaterialTheme.typography.headlineMedium)
         Spacer(modifier = Modifier.height(8.dp))
         TextButton(onClick = onHistory) { Text("View history") }
+        TextButton(onClick = { Notifier.show(context, "Japa Counter", "Time for your japa") }) {
+            Text("Test notification")
+        }
+        TextButton(onClick = {
+            val request = OneTimeWorkRequestBuilder<ReminderWorker>()
+                .setInputData(workDataOf("ignoreQuiet" to true))
+                .build()
+            WorkManager.getInstance(context).enqueue(request)
+        }) { Text("Test reminder check") }
+
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = newName,

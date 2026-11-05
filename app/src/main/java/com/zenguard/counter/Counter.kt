@@ -10,5 +10,6 @@ data class Counter(
     val name: String,
     val createdAt: Long = System.currentTimeMillis(),
     @ColumnInfo(defaultValue = "1.0") val focusIntervalSec: Double = 1.0,
-    @ColumnInfo(defaultValue = "1") val focusTargetMalas: Int = 1
+    @ColumnInfo(defaultValue = "1") val focusTargetMalas: Int = 1,
+    @ColumnInfo(defaultValue = "108") val dailyTarget: Int = 108
 )

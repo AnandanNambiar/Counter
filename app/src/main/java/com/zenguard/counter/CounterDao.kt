@@ -38,4 +38,14 @@ interface CounterDao {
     @Query("UPDATE counter SET focusIntervalSec = :sec, focusTargetMalas = :malas WHERE id = :id")
     suspend fun saveFocus(id: Int, sec: Double, malas: Int)
 
-}
+    @Query("UPDATE counter SET dailyTarget = :target WHERE id = :id")
+    suspend fun saveTarget(id: Int, target: Int)
+
+    @Query("""
+    SELECT c.* FROM counter c
+    WHERE c.dailyTarget > COALESCE(
+        (SELECT count FROM daily_count WHERE counterId = c.id AND date = :today), 0)
+    ORDER BY c.createdAt
+""")
+    suspend fun countersBelowTarget(today: String): List<Counter>
+    }
