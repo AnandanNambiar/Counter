@@ -1,5 +1,6 @@
 package com.zenguard.counter
 
+import androidx.room.withTransaction
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -64,4 +65,13 @@ fun parseBackupJson(json: String): Pair<List<Counter>, List<DailyCount>> {
     }
 
     return counters to days
+}
+
+suspend fun restoreBackup(db: AppDatabase, counters: List<Counter>, days: List<DailyCount>) {
+    db.withTransaction {
+        db.dailyCountDao().clearAll()
+        db.counterDao().clearAll()
+        db.counterDao().insertAll(counters)
+        db.dailyCountDao().insertAll(days)
+    }
 }

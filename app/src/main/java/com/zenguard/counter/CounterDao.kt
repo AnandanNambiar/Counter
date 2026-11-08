@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Query
 import androidx.room.Insert
 import kotlinx.coroutines.flow.Flow
+import androidx.room.OnConflictStrategy
 
 
 @Dao
@@ -51,6 +52,12 @@ interface CounterDao {
 
     @Query("SELECT * FROM counter ORDER BY id")
     suspend fun getAll(): List<Counter>
+
+    @Query("DELETE FROM counter")
+    suspend fun clearAll()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(list: List<Counter>)
 
 
     }

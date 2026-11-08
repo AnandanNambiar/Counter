@@ -352,9 +352,17 @@ fun TapCounter(
                     .background(MaterialTheme.colorScheme.primary)
                     .clickable {
                         scope.launch {
-                            val d = LocalDate.now().toString()
-                            dao.ensureRow(counterId, d)
-                            dao.increment(counterId, d)
+                            scope.launch {
+                                val d = LocalDate.now().toString()
+                                dao.ensureRow(counterId, d)
+                                dao.increment(counterId, d)
+                                val newCount = dao.getCount(counterId, d) ?: 0
+                                if (newCount > 0 && newCount % 108 == 0) {
+                                    vibrator?.vibrate(
+                                        VibrationEffect.createOneShot(800, VibrationEffect.DEFAULT_AMPLITUDE)
+                                    )
+                                }
+                            }
                         }
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     },
@@ -516,6 +524,49 @@ fun CounterList(
         }
     }
 
+    var pendingRestore by remember {
+        mutableStateOf<Pair<List<Counter>, List<DailyCount>>?>(null)
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                try {
+                    val text = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() }
+                    } ?: throw IllegalStateException("empty file")
+                    pendingRestore = parseBackupJson(text)
+                } catch (e: Exception) {
+                    Toast.makeText(context, "That File Is not a Valid backup", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    pendingRestore?.let { (cs, ds) ->
+        AlertDialog(
+            onDismissRequest = { pendingRestore = null },
+            title = { Text("Restore backup?") },
+            text = {
+                Text("This replaces ALL current data with the backup: ${cs.size} counters and ${ds.size} days of history. This cannot be undone.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingRestore = null
+                    scope.launch {
+                        restoreBackup(AppDatabase.get(context), cs, ds)
+                        Toast.makeText(context, "Backup restored", Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("Restore") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRestore = null }) { Text("Cancel") }
+            }
+        )
+    }
+
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -536,6 +587,14 @@ fun CounterList(
                         onClick = {
                             homeMenu = false
                             exportLauncher.launch("japa-backup-${LocalDate.now()}.json")
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = { Text("Restore from backup") },
+                        onClick = {
+                            homeMenu = false
+                            importLauncher.launch(arrayOf("*/*"))
                         }
                     )
                 }
@@ -576,6 +635,7 @@ fun CounterList(
             items(counters, key = { it.id }) { c ->
                 var menuOpen by remember { mutableStateOf(false) }
                 var renameOpen by remember { mutableStateOf(false) }
+                var deleteOpen by remember { mutableStateOf(false) }
                 var renameText by remember { mutableStateOf(c.name) }
 
                 Card(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
@@ -613,11 +673,9 @@ fun CounterList(
                                     text = { Text("Delete") },
                                     onClick = {
                                         menuOpen = false
-                                        scope.launch {
-                                            dailyDao.resetAll(c.id)
-                                            dao.delete(c.id)
-                                        }
+                                        deleteOpen = true
                                     }
+
                                 )
                             }
                         }
@@ -646,6 +704,25 @@ fun CounterList(
                         },
                         dismissButton = {
                             TextButton(onClick = { renameOpen = false }) { Text("Cancel") }
+                        }
+                    )
+                }
+                if (deleteOpen) {
+                    AlertDialog(
+                        onDismissRequest = { deleteOpen = false },
+                        title = { Text("Delete ${c.name}?") },
+                        text = { Text("All counts and history for this counter will be deleted. This cannot be undone.") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                deleteOpen = false
+                                scope.launch {
+                                    dailyDao.resetAll(c.id)
+                                    dao.delete(c.id)
+                                }
+                            }) { Text("Delete") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { deleteOpen = false }) { Text("Cancel") }
                         }
                     )
                 }
