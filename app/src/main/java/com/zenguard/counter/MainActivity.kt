@@ -1,14 +1,17 @@
 package com.zenguard.counter
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,12 +34,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -52,6 +57,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,27 +66,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import androidx.work.workDataOf
 import com.zenguard.counter.ui.theme.CounterTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
-import android.content.Context
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private val askNotifications =
@@ -132,22 +133,6 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    CounterTheme {
-        Greeting("Android")
-    }
-}
-
-@Composable
 fun TapCounter(
     counterId: Int,
     name: String,
@@ -196,7 +181,6 @@ fun TapCounter(
             vibrator?.vibrate(VibrationEffect.createOneShot(1000, VibrationEffect.DEFAULT_AMPLITUDE))
         }
     }
-
 
     // Load this counter's saved settings
     LaunchedEffect(counterId) {
@@ -284,8 +268,14 @@ fun TapCounter(
             Spacer(modifier = Modifier.height(8.dp))
             Text("Today: $count (108 × ${count / 108})", style = MaterialTheme.typography.bodyLarge)
             Text("Lifetime: $lifetime (108 × ${lifetime / 108})", style = MaterialTheme.typography.bodyLarge)
-            Text("Daily target: $targetLabel malas", style = MaterialTheme.typography.bodyLarge)
-            Text("Streak: $streak days", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Daily target: $targetLabel ${if (targetLabel == "1") "mala" else "malas"}",
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                "Streak: $streak ${if (streak == 1) "day" else "days"}",
+                style = MaterialTheme.typography.bodyLarge
+            )
             Spacer(modifier = Modifier.height(24.dp))
 
             // Small undo circle
@@ -352,16 +342,14 @@ fun TapCounter(
                     .background(MaterialTheme.colorScheme.primary)
                     .clickable {
                         scope.launch {
-                            scope.launch {
-                                val d = LocalDate.now().toString()
-                                dao.ensureRow(counterId, d)
-                                dao.increment(counterId, d)
-                                val newCount = dao.getCount(counterId, d) ?: 0
-                                if (newCount > 0 && newCount % 108 == 0) {
-                                    vibrator?.vibrate(
-                                        VibrationEffect.createOneShot(800, VibrationEffect.DEFAULT_AMPLITUDE)
-                                    )
-                                }
+                            val d = LocalDate.now().toString()
+                            dao.ensureRow(counterId, d)
+                            dao.increment(counterId, d)
+                            val newCount = dao.getCount(counterId, d) ?: 0
+                            if (newCount > 0 && newCount % 108 == 0) {
+                                vibrator?.vibrate(
+                                    VibrationEffect.createOneShot(800, VibrationEffect.DEFAULT_AMPLITUDE)
+                                )
                             }
                         }
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -432,14 +420,16 @@ fun TapCounter(
                     val t = if (m != null && m > 0) (m * 108).roundToInt().coerceAtLeast(1) else dailyTarget
                     dailyTarget = t
                     scope.launch { counterDao.saveTarget(counterId, t) }
-                    targetDialog = false})
-                { Text("Save") }
+                    targetDialog = false
+                }) { Text("Save") }
             },
             dismissButton = {
                 TextButton(onClick = { targetDialog = false }) { Text("Cancel") }
             }
         )
     }
+
+    // Milestone dialog
     celebrate?.let { m ->
         AlertDialog(
             onDismissRequest = { celebrate = null },
@@ -458,7 +448,9 @@ fun App(
     onOpened: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var screen by remember { mutableStateOf<Screen>(Screen.Home) }
+    var screen by rememberSaveable(stateSaver = screenSaver) {
+        mutableStateOf<Screen>(Screen.Home)
+    }
     val s = screen
 
     // Jump straight to a counter when a notification was tapped
@@ -480,6 +472,7 @@ fun App(
         is Screen.Home -> CounterList(
             onOpen = { screen = Screen.Count(it) },
             onHistory = { screen = Screen.History(null) },
+            onRewards = { screen = Screen.Rewards },
             modifier = modifier
         )
         is Screen.Count -> TapCounter(
@@ -490,6 +483,7 @@ fun App(
             modifier = modifier
         )
         is Screen.History -> HistoryScreen(s.counter, onBack = goBack, modifier = modifier)
+        is Screen.Rewards -> RewardsScreen(onBack = goBack, modifier = modifier)
     }
 }
 
@@ -497,6 +491,7 @@ fun App(
 fun CounterList(
     onOpen: (Counter) -> Unit,
     onHistory: () -> Unit,
+    onRewards: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -539,7 +534,7 @@ fun CounterList(
                     } ?: throw IllegalStateException("empty file")
                     pendingRestore = parseBackupJson(text)
                 } catch (e: Exception) {
-                    Toast.makeText(context, "That File Is not a Valid backup", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "That file is not a valid backup", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -589,7 +584,6 @@ fun CounterList(
                             exportLauncher.launch("japa-backup-${LocalDate.now()}.json")
                         }
                     )
-
                     DropdownMenuItem(
                         text = { Text("Restore from backup") },
                         onClick = {
@@ -600,17 +594,11 @@ fun CounterList(
                 }
             }
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        TextButton(onClick = onHistory) { Text("View history") }
-        TextButton(onClick = { Notifier.show(context, "Japa Counter", "Time for your japa") }) {
-            Text("Test notification")
+
+        Row {
+            TextButton(onClick = onHistory) { Text("View history") }
+            TextButton(onClick = onRewards) { Text("Rewards") }
         }
-        TextButton(onClick = {
-            val request = OneTimeWorkRequestBuilder<ReminderWorker>()
-                .setInputData(workDataOf("ignoreQuiet" to true))
-                .build()
-            WorkManager.getInstance(context).enqueue(request)
-        }) { Text("Test reminder check") }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
@@ -675,7 +663,6 @@ fun CounterList(
                                         menuOpen = false
                                         deleteOpen = true
                                     }
-
                                 )
                             }
                         }
@@ -733,9 +720,31 @@ fun CounterList(
 
 sealed interface Screen {
     object Home : Screen
+    object Rewards : Screen
     data class Count(val counter: Counter) : Screen
     data class History(val counter: Counter?) : Screen
 }
+
+val screenSaver = Saver<Screen, List<Any?>>(
+    save = { s ->
+        when (s) {
+            is Screen.Home -> listOf("home")
+            is Screen.Rewards -> listOf("rewards")
+            is Screen.Count -> listOf("count", s.counter.id, s.counter.name)
+            is Screen.History -> listOf("history", s.counter?.id, s.counter?.name)
+        }
+    },
+    restore = { l ->
+        when (l[0]) {
+            "count" -> Screen.Count(Counter(id = l[1] as Int, name = l[2] as String))
+            "history" -> Screen.History(
+                if (l[1] != null) Counter(id = l[1] as Int, name = l[2] as String) else null
+            )
+            "rewards" -> Screen.Rewards
+            else -> Screen.Home
+        }
+    }
+)
 
 @Composable
 fun HistoryScreen(
@@ -774,6 +783,77 @@ fun HistoryScreen(
                         Text(r.date, modifier = Modifier.weight(1f))
                         if (counter == null) Text(r.name, modifier = Modifier.weight(1f))
                         Text("${r.count}  (108 × ${r.count / 108})")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RewardsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val dao = remember { AppDatabase.get(context).rewardDao() }
+    val scope = rememberCoroutineScope()
+    val rewards by dao.observeAll().collectAsState(initial = emptyList())
+    var newName by remember { mutableStateOf("") }
+    var tier by remember { mutableStateOf(0) }
+    val tierNames = listOf("Small", "Medium", "Jackpot")
+
+    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
+        IconButton(onClick = onBack) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+        }
+        Text("Rewards", style = MaterialTheme.typography.headlineMedium)
+        Spacer(modifier = Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = newName,
+            onValueChange = { newName = it },
+            label = { Text("New reward") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            tierNames.forEachIndexed { i, label ->
+                FilterChip(
+                    selected = tier == i,
+                    onClick = { tier = i },
+                    label = { Text(label) }
+                )
+            }
+        }
+        Button(onClick = {
+            if (newName.isNotBlank()) {
+                val name = newName.trim()
+                val t = tier
+                scope.launch { dao.add(Reward(name = name, tier = t)) }
+                newName = ""
+            }
+        }) { Text("Add reward") }
+
+        LazyColumn {
+            tierNames.forEachIndexed { i, label ->
+                val inTier = rewards.filter { it.tier == i }
+                item {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+                    )
+                }
+                if (inTier.isEmpty()) item { Text("None yet") }
+                items(inTier, key = { it.id }) { r ->
+                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(start = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(r.name, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { scope.launch { dao.delete(r.id) } }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete")
+                            }
+                        }
                     }
                 }
             }

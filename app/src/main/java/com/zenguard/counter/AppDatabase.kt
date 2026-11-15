@@ -7,11 +7,13 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [DailyCount::class, Counter::class], version = 4)
+@Database(entities = [DailyCount::class, Counter::class, Reward::class, SlotState::class], version = 6)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun dailyCountDao(): DailyCountDao
     abstract fun counterDao(): CounterDao
+    abstract fun rewardDao(): RewardDao
+    abstract fun slotStateDao(): SlotStateDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -23,7 +25,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "japa.db"
                 )
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .build().also { instance = it }
             }
     }
@@ -39,5 +41,27 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
 val MIGRATION_3_4 = object : Migration(3, 4) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE counter ADD COLUMN dailyTarget INTEGER NOT NULL DEFAULT 108")
+    }
+}
+
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS reward (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "name TEXT NOT NULL, " +
+                    "tier INTEGER NOT NULL)"
+        )
+    }
+}
+
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS slot_state (" +
+                    "id INTEGER PRIMARY KEY NOT NULL, " +
+                    "tokens INTEGER NOT NULL, " +
+                    "dryCount INTEGER NOT NULL)"
+        )
     }
 }
