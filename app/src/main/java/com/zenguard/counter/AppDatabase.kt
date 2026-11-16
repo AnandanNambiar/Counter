@@ -7,13 +7,17 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [DailyCount::class, Counter::class, Reward::class, SlotState::class], version = 6)
+@Database(
+    entities = [DailyCount::class, Counter::class, Reward::class, SlotState::class, Track::class],
+    version = 7
+)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun dailyCountDao(): DailyCountDao
     abstract fun counterDao(): CounterDao
     abstract fun rewardDao(): RewardDao
     abstract fun slotStateDao(): SlotStateDao
+    abstract fun trackDao(): TrackDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -25,7 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "japa.db"
                 )
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .build().also { instance = it }
             }
     }
@@ -62,6 +66,19 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
                     "id INTEGER PRIMARY KEY NOT NULL, " +
                     "tokens INTEGER NOT NULL, " +
                     "dryCount INTEGER NOT NULL)"
+        )
+    }
+}
+
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS track (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "name TEXT NOT NULL, " +
+                    "filePath TEXT NOT NULL, " +
+                    "durationSec INTEGER NOT NULL, " +
+                    "requiredLevel INTEGER NOT NULL)"
         )
     }
 }

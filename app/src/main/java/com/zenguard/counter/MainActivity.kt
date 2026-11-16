@@ -143,6 +143,7 @@ fun TapCounter(
     val context = LocalContext.current
     val dao = remember { AppDatabase.get(context).dailyCountDao() }
     val counterDao = remember { AppDatabase.get(context).counterDao() }
+    val slotDao = remember { AppDatabase.get(context).slotStateDao() }
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val vibrator = context.getSystemService(Vibrator::class.java)
@@ -204,6 +205,11 @@ fun TapCounter(
                 val date = LocalDate.now().toString()
                 dao.ensureRow(counterId, date)
                 dao.increment(counterId, date)
+                val newCount = dao.getCount(counterId, date) ?: 0
+                if (newCount > 0 && newCount % 108 == 0) {
+                    slotDao.ensureRow()
+                    slotDao.addToken()
+                }
                 session++
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             }
@@ -350,6 +356,8 @@ fun TapCounter(
                                 vibrator?.vibrate(
                                     VibrationEffect.createOneShot(800, VibrationEffect.DEFAULT_AMPLITUDE)
                                 )
+                                slotDao.ensureRow()
+                                slotDao.addToken()
                             }
                         }
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -473,6 +481,7 @@ fun App(
             onOpen = { screen = Screen.Count(it) },
             onHistory = { screen = Screen.History(null) },
             onRewards = { screen = Screen.Rewards },
+            onMeditate = { screen = Screen.Meditation },
             modifier = modifier
         )
         is Screen.Count -> TapCounter(
@@ -484,6 +493,7 @@ fun App(
         )
         is Screen.History -> HistoryScreen(s.counter, onBack = goBack, modifier = modifier)
         is Screen.Rewards -> RewardsScreen(onBack = goBack, modifier = modifier)
+        is Screen.Meditation -> MeditationScreen(onBack = goBack, modifier = modifier)
     }
 }
 
@@ -492,6 +502,7 @@ fun CounterList(
     onOpen: (Counter) -> Unit,
     onHistory: () -> Unit,
     onRewards: () -> Unit,
+    onMeditate: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -598,6 +609,7 @@ fun CounterList(
         Row {
             TextButton(onClick = onHistory) { Text("View history") }
             TextButton(onClick = onRewards) { Text("Rewards") }
+            TextButton(onClick = onMeditate) { Text("Meditate") }
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -721,6 +733,7 @@ fun CounterList(
 sealed interface Screen {
     object Home : Screen
     object Rewards : Screen
+    object Meditation : Screen
     data class Count(val counter: Counter) : Screen
     data class History(val counter: Counter?) : Screen
 }
@@ -730,6 +743,7 @@ val screenSaver = Saver<Screen, List<Any?>>(
         when (s) {
             is Screen.Home -> listOf("home")
             is Screen.Rewards -> listOf("rewards")
+            is Screen.Meditation -> listOf("meditation")
             is Screen.Count -> listOf("count", s.counter.id, s.counter.name)
             is Screen.History -> listOf("history", s.counter?.id, s.counter?.name)
         }
@@ -741,6 +755,7 @@ val screenSaver = Saver<Screen, List<Any?>>(
                 if (l[1] != null) Counter(id = l[1] as Int, name = l[2] as String) else null
             )
             "rewards" -> Screen.Rewards
+            "meditation" -> Screen.Meditation
             else -> Screen.Home
         }
     }
@@ -858,5 +873,17 @@ fun RewardsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun MeditationScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
+        IconButton(onClick = onBack) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+        }
+        Text("Meditate", style = MaterialTheme.typography.headlineMedium)
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("No sessions yet.")
     }
 }
