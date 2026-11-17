@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [DailyCount::class, Counter::class, Reward::class, SlotState::class, Track::class],
-    version = 7
+    version = 8
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -29,7 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "japa.db"
                 )
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                     .build().also { instance = it }
             }
     }
@@ -80,5 +80,11 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
                     "durationSec INTEGER NOT NULL, " +
                     "requiredLevel INTEGER NOT NULL)"
         )
+    }
+}
+
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `meditation_day` (`date` TEXT NOT NULL, PRIMARY KEY(`date`))")
     }
 }
