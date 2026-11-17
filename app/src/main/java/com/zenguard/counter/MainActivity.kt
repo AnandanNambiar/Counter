@@ -1,5 +1,12 @@
 package com.zenguard.counter
 
+import android.media.MediaPlayer
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import androidx.compose.foundation.layout.ColumnScope
+import java.io.File
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -51,6 +58,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -66,6 +74,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -878,12 +887,251 @@ fun RewardsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
 
 @Composable
 fun MeditationScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val vibrator = context.getSystemService(Vibrator::class.java)
+    val prefs = remember { context.getSharedPreferences("meditation", Context.MODE_PRIVATE) }
+    var minutesText by remember { mutableStateOf(prefs.getString("minutes", "10") ?: "10") }
+    var running by remember { mutableStateOf(false) }
+    var remaining by remember { mutableStateOf(0) }
+    var finished by remember { mutableStateOf(false) }
+
+    // Keep the screen on only while the timer runs
+    DisposableEffect(running) {
+        view.keepScreenOn = running
+        onDispose { view.keepScreenOn = false }
+    }
+
+    LaunchedEffect(running) {
+        if (running) {
+            val total = ((minutesText.toDoubleOrNull() ?: 10.0) * 60).roundToInt().coerceAtLeast(1)
+            val endAt = System.currentTimeMillis() + total * 1000L
+            remaining = total
+            while (remaining > 0) {
+                delay(250)
+                remaining = ((endAt - System.currentTimeMillis() + 999) / 1000).toInt().coerceAtLeast(0)
+            }
+            vibrator?.vibrate(VibrationEffect.createOneShot(800, VibrationEffect.DEFAULT_AMPLITUDE))
+            finished = true
+            running = false
+        }
+    }
+
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
         IconButton(onClick = onBack) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
         }
         Text("Meditate", style = MaterialTheme.typography.headlineMedium)
         Spacer(modifier = Modifier.height(16.dp))
-        Text("No sessions yet.")
+
+        OutlinedTextField(
+            value = minutesText,
+            onValueChange = { minutesText = it },
+            label = { Text("Minutes") },
+            singleLine = true,
+            enabled = !running,
+            modifier = Modifier.width(160.dp)
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+
+        if (running) {
+            Text(
+                "%d:%02d".format(remaining / 60, remaining % 60),
+                fontSize = 64.sp
+            )
+        } else if (finished) {
+            Text("Session complete", style = MaterialTheme.typography.titleLarge)
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(onClick = {
+            if (!running) {
+                prefs.edit().putString("minutes", minutesText).apply()
+                finished = false
+            }
+            running = !running
+
+        }) {
+        Text(if (running) "Stop" else "Start")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        SessionsSection()
     }
 }
+
+@Composable
+fun ColumnScope.SessionsSection() {
+    val context = LocalContext.current
+    val dao = remember { AppDatabase.get(context).trackDao() }
+    val scope = rememberCoroutineScope()
+    val tracks by dao.observeAll().collectAsState(initial = emptyList())
+    var playingId by remember { mutableStateOf<Int?>(null) }
+    var player by remember { mutableStateOf<MediaPlayer?>(null) }
+    val stop: () -> Unit = {
+        player?.release()
+        player = null
+        playingId = null
+    }
+    DisposableEffect(Unit) { onDispose { player?.release() } }
+    var pickedUri by remember { mutableStateOf<Uri?>(null) }
+    var trackName by remember { mutableStateOf("") }
+    var level by remember { mutableStateOf(0) }
+    val chipLabels = listOf("Start", "7d", "21d", "40d")
+    val levelNames = listOf("Starter", "7 days", "21 days", "40 days")
+
+    val picker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            trackName = ""
+            level = 0
+            pickedUri = uri
+        }
+    }
+
+    pickedUri?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { pickedUri = null },
+            title = { Text("Add session") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = trackName,
+                        onValueChange = { trackName = it },
+                        label = { Text("Session name") },
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Unlocks at")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        chipLabels.forEachIndexed { i, label ->
+                            FilterChip(
+                                selected = level == i,
+                                onClick = { level = i },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val name = trackName.trim()
+                    val lvl = level
+                    pickedUri = null
+                    if (name.isNotBlank()) {
+                        scope.launch {
+                            val ok = importTrack(context, uri, name, lvl)
+                            if (!ok) {
+                                Toast.makeText(context, "Could not import that file", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pickedUri = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    Text("Sessions", style = MaterialTheme.typography.titleMedium)
+    Button(onClick = { picker.launch(arrayOf("audio/*")) }) { Text("Add session") }
+    if (tracks.isEmpty()) Text("No sessions yet.")
+    LazyColumn(modifier = Modifier.weight(1f)) {
+        items(tracks, key = { it.id }) { t ->
+            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(vertical = 12.dp)) {
+                        Text(t.name, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "%d:%02d  ·  Unlocks at: %s".format(
+                                t.durationSec / 60,
+                                t.durationSec % 60,
+                                levelNames[t.requiredLevel.coerceIn(0, 3)]
+                            )
+                        )
+                    }
+
+                    IconButton(onClick = {
+                        if (playingId == t.id) {
+                            stop()
+                        } else {
+                            stop()
+                            val mp = MediaPlayer()
+                            try {
+                                mp.setDataSource(t.filePath)
+                                mp.prepare()
+                                mp.setOnCompletionListener {
+                                    stop()
+                                    Toast.makeText(context, "Session finished", Toast.LENGTH_SHORT).show()
+                                }
+                                mp.start()
+                                player = mp
+                                playingId = t.id
+                            } catch (e: Exception) {
+                                mp.release()
+                                Toast.makeText(context, "Could not play that file", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }) {
+                        Icon(
+                            if (playingId == t.id) Icons.Default.Stop else Icons.Default.PlayArrow,
+                            contentDescription = "Play"
+                        )
+                    }
+
+                    IconButton(onClick = {
+                        scope.launch {
+                            if (playingId == t.id) stop()
+                            withContext(Dispatchers.IO) { File(t.filePath).delete() }
+                            dao.delete(t.id)
+                        }
+                    }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete")
+                    }
+                }
+            }
+        }
+    }
+}
+
+suspend fun importTrack(context: Context, uri: Uri, name: String, level: Int): Boolean =
+    withContext(Dispatchers.IO) {
+        val dir = File(context.filesDir, "meditation").apply { mkdirs() }
+        val file = File(dir, "track_${System.currentTimeMillis()}")
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                file.outputStream().use { output -> input.copyTo(output) }
+            } ?: return@withContext false
+
+            val retriever = MediaMetadataRetriever()
+            val ms = try {
+                retriever.setDataSource(file.path)
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+            } finally {
+                retriever.release()
+            }
+            if (ms == null || ms <= 0) {
+                file.delete()
+                return@withContext false
+            }
+
+            AppDatabase.get(context).trackDao().add(
+                Track(
+                    name = name,
+                    filePath = file.path,
+                    durationSec = (ms / 1000).toInt(),
+                    requiredLevel = level
+                )
+            )
+            true
+        } catch (e: Exception) {
+            file.delete()
+            false
+        }
+    }
