@@ -13,4 +13,16 @@ interface MeditationDayDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun markDone(day: MeditationDay)
+
+    @Query("SELECT COUNT(*) FROM meditation_day WHERE date = :date")
+    suspend fun countOn(date: String): Int
+
+    @Query("SELECT * FROM meditation_day")
+    suspend fun getAll(): List<MeditationDay>
+
+    @Query("DELETE FROM meditation_day")
+    suspend fun clearAll()
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(list: List<MeditationDay>)
 }

@@ -26,9 +26,10 @@ object Notifier {
         title: String,
         text: String,
         counterId: Int? = null,
-        counterName: String? = null
-    ) {
-        val manager = NotificationManagerCompat.from(context)
+        counterName: String? = null,
+        openMeditate: Boolean = false,
+        notificationId: Int = 1
+    ) {val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return
 
         val intent = Intent(context, MainActivity::class.java).apply {
@@ -37,9 +38,10 @@ object Notifier {
                 putExtra("counterId", counterId)
                 putExtra("counterName", counterName)
             }
+            if (openMeditate) putExtra("openMeditate", true)
         }
         val pending = PendingIntent.getActivity(
-            context, counterId ?: 0, intent,
+            context, if (openMeditate) 100000 else (counterId ?: 0), intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -51,6 +53,6 @@ object Notifier {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
 
-        manager.notify(1, notification)
+        manager.notify(notificationId, notification)
     }
 }

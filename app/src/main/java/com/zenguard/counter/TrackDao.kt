@@ -15,4 +15,13 @@ interface TrackDao {
 
     @Query("DELETE FROM track WHERE id = :id")
     suspend fun delete(id: Int)
+
+    @Query("SELECT * FROM track")
+    suspend fun getAll(): List<Track>
+
+    @Query("DELETE FROM track")
+    suspend fun clearAll()
+
+    @Insert
+    suspend fun insertAll(list: List<Track>)
 }

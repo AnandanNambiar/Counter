@@ -79,8 +79,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.zenguard.counter.ui.theme.CounterTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -96,6 +98,7 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     private var openCounter by mutableStateOf<Counter?>(null)
+    private var openMeditate by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -106,6 +109,10 @@ class MainActivity : ComponentActivity() {
         ) {
             askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+        WorkManager.getInstance(this).enqueue(
+            OneTimeWorkRequestBuilder<ReminderWorker>()
+                .setInputData(workDataOf("ignoreQuiet" to true)).build()
+        )
 
         val request = PeriodicWorkRequestBuilder<ReminderWorker>(2, TimeUnit.HOURS).build()
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
@@ -122,12 +129,15 @@ class MainActivity : ComponentActivity() {
                     App(
                         openCounter = openCounter,
                         onOpened = { openCounter = null },
+                        openMeditate = openMeditate,
+                        onMeditateOpened = { openMeditate = false },
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
             }
         }
     }
+
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -138,6 +148,7 @@ class MainActivity : ComponentActivity() {
         val id = intent?.getIntExtra("counterId", -1) ?: -1
         val name = intent?.getStringExtra("counterName")
         if (id != -1 && name != null) openCounter = Counter(id = id, name = name)
+        if (intent?.getBooleanExtra("openMeditate", false) == true) openMeditate = true
     }
 }
 
@@ -463,6 +474,8 @@ fun TapCounter(
 fun App(
     openCounter: Counter?,
     onOpened: () -> Unit,
+    openMeditate: Boolean,
+    onMeditateOpened: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var screen by rememberSaveable(stateSaver = screenSaver) {
@@ -475,6 +488,13 @@ fun App(
         if (openCounter != null) {
             screen = Screen.Count(openCounter)
             onOpened()
+        }
+    }
+
+    LaunchedEffect(openMeditate) {
+        if (openMeditate) {
+            screen = Screen.Meditation
+            onMeditateOpened()
         }
     }
 
@@ -530,7 +550,7 @@ fun CounterList(
         if (uri != null) {
             scope.launch {
                 val db = AppDatabase.get(context)
-                val json = buildBackupJson(db.counterDao().getAll(), db.dailyCountDao().getAll())
+                val json = buildBackupJson(db)
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
                 }
@@ -539,9 +559,7 @@ fun CounterList(
         }
     }
 
-    var pendingRestore by remember {
-        mutableStateOf<Pair<List<Counter>, List<DailyCount>>?>(null)
-    }
+    var pendingRestore by remember { mutableStateOf<BackupData?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -560,18 +578,18 @@ fun CounterList(
         }
     }
 
-    pendingRestore?.let { (cs, ds) ->
+    pendingRestore?.let { b ->
         AlertDialog(
             onDismissRequest = { pendingRestore = null },
             title = { Text("Restore backup?") },
             text = {
-                Text("This replaces ALL current data with the backup: ${cs.size} counters and ${ds.size} days of history. This cannot be undone.")
+                Text("This replaces ALL current data with the backup: ${b.counters.size} counters, ${b.days.size} days of history, ${b.rewards.size} rewards and ${b.meditationDays.size} meditation days. This cannot be undone.")
             },
             confirmButton = {
                 TextButton(onClick = {
                     pendingRestore = null
                     scope.launch {
-                        restoreBackup(AppDatabase.get(context), cs, ds)
+                        restoreBackup(AppDatabase.get(context), b)
                         Toast.makeText(context, "Backup restored", Toast.LENGTH_SHORT).show()
                     }
                 }) { Text("Restore") }
@@ -891,6 +909,22 @@ fun MeditationScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val view = LocalView.current
     val vibrator = context.getSystemService(Vibrator::class.java)
     val prefs = remember { context.getSharedPreferences("meditation", Context.MODE_PRIVATE) }
+    val dayDao = remember { AppDatabase.get(context).meditationDayDao() }
+    val dates by dayDao.observeDates().collectAsState(initial = emptyList())
+    val streak = computeStreak(dates.map { LocalDate.parse(it) }.toSet(), LocalDate.now())
+    val earned = when {
+        streak >= 40 -> 3
+        streak >= 21 -> 2
+        streak >= 7 -> 1
+        else -> 0
+    }
+    var level by remember { mutableStateOf(prefs.getInt("level", 0)) }
+    LaunchedEffect(earned) {
+        if (earned > level) {
+            level = earned
+            prefs.edit().putInt("level", earned).apply()
+        }
+    }
     var minutesText by remember { mutableStateOf(prefs.getString("minutes", "10") ?: "10") }
     var running by remember { mutableStateOf(false) }
     var remaining by remember { mutableStateOf(0) }
@@ -912,6 +946,7 @@ fun MeditationScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                 remaining = ((endAt - System.currentTimeMillis() + 999) / 1000).toInt().coerceAtLeast(0)
             }
             vibrator?.vibrate(VibrationEffect.createOneShot(800, VibrationEffect.DEFAULT_AMPLITUDE))
+            dayDao.markDone(MeditationDay(LocalDate.now().toString()))
             finished = true
             running = false
         }
@@ -922,6 +957,8 @@ fun MeditationScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
         }
         Text("Meditate", style = MaterialTheme.typography.headlineMedium)
+        Text("Streak: $streak ${if (streak == 1) "day" else "days"}  ·  Days done: ${dates.size}")
+        Text("Level: $level of 3")
         Spacer(modifier = Modifier.height(16.dp))
 
         OutlinedTextField(
@@ -956,13 +993,14 @@ fun MeditationScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        SessionsSection()
+        SessionsSection(unlocked = level)
     }
 }
 
 @Composable
-fun ColumnScope.SessionsSection() {
+fun ColumnScope.SessionsSection(unlocked: Int) {
     val context = LocalContext.current
+    val dayDao = remember { AppDatabase.get(context).meditationDayDao() }
     val dao = remember { AppDatabase.get(context).trackDao() }
     val scope = rememberCoroutineScope()
     val tracks by dao.observeAll().collectAsState(initial = emptyList())
@@ -1049,15 +1087,16 @@ fun ColumnScope.SessionsSection() {
                     Column(modifier = Modifier.weight(1f).padding(vertical = 12.dp)) {
                         Text(t.name, style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "%d:%02d  ·  Unlocks at: %s".format(
-                                t.durationSec / 60,
-                                t.durationSec % 60,
-                                levelNames[t.requiredLevel.coerceIn(0, 3)]
-                            )
+                            (if (t.requiredLevel > unlocked) "Locked  ·  " else "") +
+                                    "%d:%02d  ·  Unlocks at: %s".format(
+                                        t.durationSec / 60,
+                                        t.durationSec % 60,
+                                        levelNames[t.requiredLevel.coerceIn(0, 3)]
+                                    )
                         )
                     }
 
-                    IconButton(onClick = {
+                    IconButton(enabled = t.requiredLevel <= unlocked, onClick = {
                         if (playingId == t.id) {
                             stop()
                         } else {
@@ -1068,6 +1107,7 @@ fun ColumnScope.SessionsSection() {
                                 mp.prepare()
                                 mp.setOnCompletionListener {
                                     stop()
+                                    scope.launch { dayDao.markDone(MeditationDay(LocalDate.now().toString())) }
                                     Toast.makeText(context, "Session finished", Toast.LENGTH_SHORT).show()
                                 }
                                 mp.start()

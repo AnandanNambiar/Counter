@@ -17,17 +17,29 @@ class ReminderWorker(
         if (!ignoreQuiet && (hour >= 22 || hour < 6)) return Result.success()
 
         val db = AppDatabase.get(applicationContext)
-        val below = db.counterDao().countersBelowTarget(LocalDate.now().toString())
-        if (below.isEmpty()) return Result.success()
+        val today = LocalDate.now().toString()
 
-        val only = below.singleOrNull()
-        Notifier.show(
-            applicationContext,
-            "Japa Counter",
-            "Still to do today: " + below.joinToString(", ") { it.name },
-            counterId = only?.id,
-            counterName = only?.name
-        )
+        val below = db.counterDao().countersBelowTarget(today)
+        if (below.isNotEmpty()) {
+            val only = below.singleOrNull()
+            Notifier.show(
+                applicationContext,
+                "Japa Counter",
+                "Still to do today: " + below.joinToString(", ") { it.name },
+                counterId = only?.id,
+                counterName = only?.name
+            )
+        }
+
+        if (db.meditationDayDao().countOn(today) == 0) {
+            Notifier.show(
+                applicationContext,
+                "Meditate",
+                "A quiet session is waiting whenever you're ready.",
+                openMeditate = true,
+                notificationId = 2
+            )
+        }
         return Result.success()
     }
 }

@@ -15,4 +15,13 @@ interface RewardDao {
 
     @Query("DELETE FROM reward WHERE id = :id")
     suspend fun delete(id: Int)
+
+    @Query("SELECT * FROM reward")
+    suspend fun getAll(): List<Reward>
+
+    @Query("DELETE FROM reward")
+    suspend fun clearAll()
+
+    @Insert
+    suspend fun insertAll(list: List<Reward>)
 }
